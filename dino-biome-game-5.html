@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Pixel Dino - Biome Runner</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#111;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    min-height:100vh;
+    font-family:'Courier New', monospace;
+    color:#eee;
+  }
+  #wrap { position:relative; }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border:4px solid #444;
+    border-radius:6px;
+    box-shadow:0 0 30px rgba(0,0,0,0.6);
+  }
+  #hud {
+    position:absolute;
+    top:10px; left:0; right:0;
+    display:flex; justify-content:space-between;
+    padding:0 16px;
+    font-size:16px;
+    font-weight:bold;
+    text-shadow:2px 2px 0 #000;
+    pointer-events:none;
+  }
+  #biomeLabel {
+    position:absolute;
+    top:40px; left:0; right:0;
+    text-align:center;
+    font-size:13px;
+    opacity:0.85;
+    text-shadow:2px 2px 0 #000;
+    pointer-events:none;
+    transition: opacity 0.3s;
+  }
+  #overlay {
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.55);
+    text-align:center;
+    gap:10px;
+  }
+  #overlay h1 { font-size:22px; text-shadow:2px 2px 0 #000; }
+  #overlay p { font-size:13px; opacity:0.85; }
+  .hidden { display:none !important; }
+  #footer { margin-top:10px; font-size:12px; opacity:0.6; }
+  #touchControls {
+    display:flex; gap:10px; margin-top:12px;
+  }
+  #touchControls button {
+    font-family:'Courier New', monospace;
+    font-weight:bold;
+    font-size:14px;
+    padding:14px 22px;
+    border-radius:8px;
+    border:3px solid #444;
+    background:#333;
+    color:#eee;
+    cursor:pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select:none;
+  }
+  #touchControls button:active { background:#555; }
+
+  #menuButtons { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:6px; }
+  #menuButtons button, .panelBtn {
+    font-family:'Courier New', monospace;
+    font-weight:bold;
+    font-size:12px;
+    padding:10px 14px;
+    border-radius:6px;
+    border:2px solid #555;
+    background:#2a2a2a;
+    color:#eee;
+    cursor:pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #menuButtons button:active, .panelBtn:active { background:#444; }
+
+  .panel {
+    background:rgba(20,20,20,0.92);
+    border:2px solid #555;
+    border-radius:8px;
+    padding:14px 18px;
+    max-width:520px;
+    max-height:250px;
+    overflow-y:auto;
+  }
+  .panel h2 { font-size:15px; margin-bottom:8px; }
+  .shopRow, .lbRow {
+    display:flex; align-items:center; justify-content:space-between;
+    gap:10px;
+    font-size:12px;
+    padding:6px 4px;
+    border-bottom:1px solid #333;
+  }
+  .shopRow:last-child, .lbRow:last-child { border-bottom:none; }
+  .swatch { width:16px; height:16px; border-radius:3px; border:2px solid #000; display:inline-block; vertical-align:middle; margin-right:6px; }
+  .buyBtn {
+    font-family:'Courier New', monospace;
+    font-size:11px; font-weight:bold;
+    padding:6px 10px; border-radius:5px;
+    border:2px solid #444; cursor:pointer;
+    background:#3a5c26; color:#eee;
+  }
+  .buyBtn.owned { background:#555; }
+  .buyBtn.selected { background:#c9911a; }
+  .buyBtn:disabled { opacity:0.4; cursor:default; }
+  #nameForm { display:flex; gap:8px; margin-top:8px; }
+  #nameInput {
+    font-family:'Courier New', monospace;
+    padding:8px; border-radius:5px; border:2px solid #555;
+    background:#1a1a1a; color:#eee; width:140px; font-size:13px;
+  }
+  #livesHud {
+    position:absolute; top:34px; left:16px;
+    font-size:14px; text-shadow:2px 2px 0 #000; pointer-events:none;
+  }
+  #storageNote { font-size:10px; opacity:0.5; max-width:400px; }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="game" width="800" height="300"></canvas>
+  <div id="hud">
+    <div id="score">SCORE: 0</div>
+    <div id="coins">🪙 0</div>
+    <div id="hiscore">BEST: 0</div>
+  </div>
+  <div id="livesHud"></div>
+  <div id="biomeLabel">🌵 Wüste</div>
+  <div id="overlay"></div>
+</div>
+<div id="footer">Leertaste zum Starten (oder Buttons unten auf Touch-Geräten)</div>
+<div id="touchControls">
+  <button id="btnJump">⬆️ SPRINGEN</button>
+  <button id="btnDuck">⬇️ DUCKEN</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const W = canvas.width, H = canvas.height;
+const GROUND_Y = 230;
+
+// ---------- BIOME DEFINITIONS ----------
+const BIOMES = [
+  {
+    name: "🌵 Wüste",
+    sky: ['#ffd97a','#ffb14e'],
+    ground: '#e0a458',
+    groundLine: '#a56a2e',
+    accent: '#c97b2e',
+    particle: '#ffdf9b',
+    obstacleColors: ['#3f6b2e','#568a3d'],
+    bgDecoColor: '#e8b96b'
+  },
+  {
+    name: "🌲 Wald",
+    sky: ['#bfeaff','#8fd3f4'],
+    ground: '#5b8c3a',
+    groundLine: '#3a5c26',
+    accent: '#2e4a1f',
+    particle: '#ffffff',
+    obstacleColors: ['#4a3222','#6b4a30'],
+    bgDecoColor: '#3f6b2e'
+  },
+  {
+    name: "❄️ Schnee",
+    sky: ['#dfeeff','#a9c9e8'],
+    ground: '#eef6ff',
+    groundLine: '#b8cde0',
+    accent: '#7fa8cc',
+    particle: '#ffffff',
+    obstacleColors: ['#5a7a99','#8fb0cc'],
+    bgDecoColor: '#ffffff'
+  },
+  {
+    name: "🌋 Lava",
+    sky: ['#3a1414','#7a1f1f'],
+    ground: '#2b1414',
+    groundLine: '#ff5a1f',
+    accent: '#ff8c3a',
+    particle: '#ff5a1f',
+    obstacleColors: ['#4a1f1f','#6b2a2a'],
+    bgDecoColor: '#ff5a1f'
+  },
+  {
+    name: "🌊 Ozean",
+    sky: ['#0e2a4a','#1e5c8a'],
+    ground: '#123a5c',
+    groundLine: '#3aa0d0',
+    accent: '#5ecfff',
+    particle: '#bfefff',
+    obstacleColors: ['#0a5c4a','#127a63'],
+    bgDecoColor: '#1e5c8a'
+  }
+];
+const BIOME_SCORE_STEP = 400; // switch biome every N score
+
+// ---------- GAME STATE ----------
+let state = 'idle'; // idle, playing, dead
+let score = 0;
+let hiscore = parseInt(localStorage.getItem('dino_hiscore')||'0', 10);
+let totalCoins = parseInt(localStorage.getItem('dino_coins')||'0', 10);
+let runCoins = 0;
+
+// ---------- SHOP DATA ----------
+const SKINS = [
+  { id:'classic', name:'Klassik Grün', cost:0,  body:'#3d5a2e', belly:'#7fae5c' },
+  { id:'blue',    name:'Ozean Blau',   cost:5,  body:'#1f4e6b', belly:'#5ecfff' },
+  { id:'red',     name:'Lava Rot',     cost:5,  body:'#7a1f1f', belly:'#ff8c3a' },
+  { id:'purple',  name:'Kristall Lila',cost:8,  body:'#4a2e6b', belly:'#c58cff' },
+  { id:'gold',    name:'Gold Deluxe',  cost:10, body:'#8a6d1f', belly:'#ffe680' }
+];
+const LIFE_COST = 3;
+
+function loadOwnedSkins() {
+  try { return JSON.parse(localStorage.getItem('dino_owned_skins')) || ['classic']; }
+  catch(e) { return ['classic']; }
+}
+let ownedSkins = loadOwnedSkins();
+let selectedSkin = localStorage.getItem('dino_selected_skin') || 'classic';
+let ownedLives = parseInt(localStorage.getItem('dino_lives')||'0', 10);
+let activeLives = 0; // lives available in current run
+let inviFrames = 0; // invincibility flash timer after using a life
+
+function loadLeaderboard() {
+  try { return JSON.parse(localStorage.getItem('dino_leaderboard')) || []; }
+  catch(e) { return []; }
+}
+function saveLeaderboard(list) {
+  localStorage.setItem('dino_leaderboard', JSON.stringify(list));
+}
+function addToLeaderboard(name, sc) {
+  const list = loadLeaderboard();
+  list.push({ name: name.slice(0,12) || 'Anonym', score: Math.floor(sc) });
+  list.sort((a,b) => b.score - a.score);
+  const top = list.slice(0, 10);
+  saveLeaderboard(top);
+  return top;
+}
+function currentSkin() {
+  return SKINS.find(s => s.id === selectedSkin) || SKINS[0];
+}
+let speed = 4;
+const BASE_SPEED = 4;
+const MAX_SPEED = 16;
+let groundOffset = 0;
+let frame = 0;
+let biomeIndex = 0;
+let biomeTransition = 1; // 1 = fully settled
+
+document.getElementById('hiscore').textContent = 'BEST: ' + hiscore;
+document.getElementById('coins').textContent = '🪙 ' + totalCoins;
+
+// particles for weather / atmosphere
+let particles = [];
+function spawnParticle(biome) {
+  particles.push({
+    x: Math.random()*W,
+    y: Math.random()*GROUND_Y*0.8,
+    vy: 0.6 + Math.random()*1.2,
+    vx: -speed*0.3 - Math.random(),
+    size: 1 + Math.random()*2,
+    life: 200
+  });
+}
+
+// ---------- DINO ----------
+const dino = {
+  x: 60,
+  y: 0,
+  w: 22,
+  h: 24,
+  vy: 0,
+  gravity: 0.7,
+  jumpPower: -12.5,
+  grounded: true,
+  ducking: false,
+  animFrame: 0
+};
+dino.y = GROUND_Y - dino.h;
+
+function resetDino() {
+  dino.y = GROUND_Y - dino.h;
+  dino.vy = 0;
+  dino.grounded = true;
+  dino.ducking = false;
+}
+
+// ---------- OBSTACLES ----------
+let obstacles = [];
+let nextObstacleTimer = 0;
+
+function spawnObstacle() {
+  const type = Math.random();
+  let o;
+  if (type < 0.55) {
+    // cactus/rock cluster (ground obstacle), variable width
+    const segs = 1 + Math.floor(Math.random()*3);
+    o = { type:'ground', x: W+20, w: 12*segs+segs*4, h: 20+segs*6, segs };
+  } else if (type < 0.8) {
+    // tall obstacle (tree/spike/iceberg)
+    o = { type:'tall', x: W+20, w: 16, h: 40 };
+  } else {
+    // flying obstacle (bird/bat/fish) - forces duck
+    o = { type:'fly', x: W+20, w: 22, h: 16, flyY: GROUND_Y - 55 - Math.random()*25 };
+  }
+  o.x = W + 20;
+  obstacles.push(o);
+}
+
+function obstacleBox(o) {
+  if (o.type === 'fly') {
+    return { x:o.x, y:o.flyY, w:o.w, h:o.h };
+  }
+  return { x:o.x, y: GROUND_Y - o.h, w:o.w, h:o.h };
+}
+
+// ---------- COINS ----------
+let coins = [];
+let nextCoinScore = 250;
+const COIN_SCORE_STEP = 250;
+
+function spawnCoin() {
+  // place coin at a reachable height: ground level, jump-arc level, or duck-safe high level
+  const pattern = Math.random();
+  let y;
+  if (pattern < 0.4) {
+    y = GROUND_Y - 20; // low, grab while running
+  } else if (pattern < 0.75) {
+    y = GROUND_Y - 70; // mid air, needs a jump
+  } else {
+    y = GROUND_Y - 100; // high arc, needs a full jump
+  }
+  coins.push({ x: W + 40, y, size: 14, collected: false, spin: Math.random()*10, bob: Math.random()*10 });
+}
+
+// ---------- INPUT ----------
+let menuScreen = 'main'; // main, shop, highscores
+
+let jumpHeld = false;
+
+function jump() {
+  if (state === 'idle' || state === 'dead') {
+    if (menuScreen === 'main') startGame();
+    return;
+  }
+  if (dino.grounded) {
+    dino.vy = dino.jumpPower;
+    dino.grounded = false;
+  }
+}
+function duckStart() {
+  if (dino.grounded) dino.ducking = true;
+}
+function duckEnd() {
+  dino.ducking = false;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    jumpHeld = true;
+    jump();
+  } else if (e.code === 'ArrowDown') {
+    e.preventDefault();
+    duckStart();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') jumpHeld = false;
+  if (e.code === 'ArrowDown') duckEnd();
+});
+canvas.addEventListener('mousedown', () => { jumpHeld = true; jump(); });
+document.addEventListener('mouseup', () => { jumpHeld = false; });
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); jumpHeld = true; jump(); }, {passive:false});
+canvas.addEventListener('touchend', (e) => { e.preventDefault(); jumpHeld = false; }, {passive:false});
+
+const overlayEl = document.getElementById('overlay');
+overlayEl.addEventListener('mousedown', (e) => { if (e.target === overlayEl || e.target.closest('.tapArea')) jump(); });
+overlayEl.addEventListener('touchstart', (e) => { if (e.target === overlayEl || e.target.closest('.tapArea')) { e.preventDefault(); jump(); } }, {passive:false});
+overlayEl.style.pointerEvents = 'auto';
+overlayEl.style.cursor = 'pointer';
+
+const btnJump = document.getElementById('btnJump');
+const btnDuck = document.getElementById('btnDuck');
+btnJump.addEventListener('touchstart', (e) => { e.preventDefault(); jumpHeld = true; jump(); }, {passive:false});
+btnJump.addEventListener('touchend', (e) => { e.preventDefault(); jumpHeld = false; }, {passive:false});
+btnJump.addEventListener('mousedown', (e) => { e.preventDefault(); jumpHeld = true; jump(); });
+btnJump.addEventListener('mouseup', (e) => { e.preventDefault(); jumpHeld = false; });
+btnDuck.addEventListener('touchstart', (e) => { e.preventDefault(); duckStart(); }, {passive:false});
+btnDuck.addEventListener('touchend', (e) => { e.preventDefault(); duckEnd(); }, {passive:false});
+btnDuck.addEventListener('mousedown', (e) => { e.preventDefault(); duckStart(); });
+btnDuck.addEventListener('mouseup', (e) => { e.preventDefault(); duckEnd(); });
+
+// ---------- GAME FLOW ----------
+function startGame() {
+  state = 'playing';
+  score = 0;
+  speed = BASE_SPEED;
+  obstacles = [];
+  particles = [];
+  coins = [];
+  runCoins = 0;
+  nextCoinScore = COIN_SCORE_STEP;
+  biomeIndex = 0;
+  nextObstacleTimer = 60;
+  activeLives = ownedLives;
+  inviFrames = 0;
+  updateLivesHud();
+  resetDino();
+  document.getElementById('overlay').classList.add('hidden');
+}
+
+function updateLivesHud() {
+  const el = document.getElementById('livesHud');
+  el.textContent = activeLives > 0 ? '❤️'.repeat(activeLives) : '';
+}
+
+function gameOver() {
+  state = 'dead';
+  if (score > hiscore) {
+    hiscore = score;
+    localStorage.setItem('dino_hiscore', hiscore);
+    document.getElementById('hiscore').textContent = 'BEST: ' + hiscore;
+  }
+  menuScreen = 'main';
+  renderMenu();
+}
+
+// ---------- COLLISION ----------
+function rectsOverlap(a,b) {
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+// ---------- UPDATE ----------
+function update() {
+  frame++;
+  if (state !== 'playing') return;
+
+  score += speed * 0.06;
+  const speedSteps = Math.floor(score / 200);
+  speed = Math.min(MAX_SPEED, BASE_SPEED * Math.pow(1.05, speedSteps));
+
+  // biome switching
+  const targetBiome = Math.min(BIOMES.length-1, Math.floor(score / BIOME_SCORE_STEP));
+  if (targetBiome !== biomeIndex) {
+    biomeIndex = targetBiome;
+    const label = document.getElementById('biomeLabel');
+    label.textContent = BIOMES[biomeIndex].name;
+    label.style.opacity = '1';
+  }
+
+  // dino physics
+  const h = dino.ducking ? 14 : 24;
+  if (!dino.grounded) {
+    dino.vy += dino.gravity;
+    dino.y += dino.vy;
+    if (dino.y >= GROUND_Y - h) {
+      dino.y = GROUND_Y - h;
+      dino.vy = 0;
+      dino.grounded = true;
+    }
+  } else {
+    dino.y = GROUND_Y - h;
+    if (jumpHeld && !dino.ducking) {
+      dino.vy = dino.jumpPower;
+      dino.grounded = false;
+    }
+  }
+  dino.h = h;
+  dino.animFrame += 0.2;
+
+  // ground scroll
+  groundOffset -= speed;
+  if (groundOffset <= -16) groundOffset += 16;
+
+  // obstacles
+  nextObstacleTimer -= 1;
+  if (nextObstacleTimer <= 0) {
+    spawnObstacle();
+    nextObstacleTimer = 55 - Math.min(30, speed*3) + Math.random()*40;
+  }
+  obstacles.forEach(o => o.x -= speed);
+  obstacles = obstacles.filter(o => o.x + o.w > -20);
+
+  // coin spawning every COIN_SCORE_STEP score
+  if (score >= nextCoinScore) {
+    spawnCoin();
+    nextCoinScore += COIN_SCORE_STEP;
+  }
+  coins.forEach(c => { c.x -= speed; c.spin += 0.15; c.bob += 0.1; });
+  coins = coins.filter(c => c.x > -30 && !c.collected);
+
+  // collisions
+  const dbox = { x: dino.x+4, y: dino.y+2, w: dino.w-8, h: dino.h-4 };
+  if (inviFrames > 0) inviFrames--;
+  for (const o of obstacles) {
+    if (inviFrames <= 0 && rectsOverlap(dbox, obstacleBox(o))) {
+      if (activeLives > 0) {
+        activeLives--;
+        ownedLives = activeLives; // reserve syncs with what's left
+        localStorage.setItem('dino_lives', ownedLives);
+        inviFrames = 70;
+        updateLivesHud();
+      } else {
+        gameOver();
+      }
+      break;
+    }
+  }
+
+  // coin collection
+  for (const c of coins) {
+    const cbox = { x: c.x-c.size/2, y: c.y-c.size/2+Math.sin(c.bob)*3, w:c.size, h:c.size };
+    if (rectsOverlap(dbox, cbox)) {
+      c.collected = true;
+      runCoins++;
+      totalCoins++;
+      localStorage.setItem('dino_coins', totalCoins);
+      document.getElementById('coins').textContent = '🪙 ' + totalCoins;
+      for (let i=0;i<8;i++) {
+        particles.push({
+          x: c.x, y: c.y,
+          vy: -1.5 + Math.random()*-1.5,
+          vx: (Math.random()-0.5)*3,
+          size: 2, life: 25, gold:true
+        });
+      }
+    }
+  }
+
+  // particles
+  if (frame % 4 === 0) spawnParticle();
+  particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life--; });
+  particles = particles.filter(p => p.life > 0 && p.x > -10);
+
+  document.getElementById('score').textContent = 'SCORE: ' + Math.floor(score);
+}
+
+// ---------- PIXEL HELPERS ----------
+function px(x,y,w,h,color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+// ---------- DRAW ----------
+function drawSky(biome) {
+  const g = ctx.createLinearGradient(0,0,0,GROUND_Y);
+  g.addColorStop(0, biome.sky[0]);
+  g.addColorStop(1, biome.sky[1]);
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,GROUND_Y);
+}
+
+function drawGround(biome) {
+  px(0, GROUND_Y, W, H-GROUND_Y, biome.ground);
+  px(0, GROUND_Y, W, 3, biome.groundLine);
+  // texture dashes
+  ctx.fillStyle = biome.accent;
+  for (let x = groundOffset; x < W; x += 16) {
+    px(x, GROUND_Y+10, 8, 3, biome.accent);
+  }
+}
+
+function drawParticles(biome) {
+  particles.forEach(p => {
+    ctx.globalAlpha = Math.min(1, p.life/60);
+    px(p.x, p.y, p.size, p.size, p.gold ? '#ffd54a' : biome.particle);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawCoins() {
+  coins.forEach(c => {
+    if (c.collected) return;
+    const bobY = c.y + Math.sin(c.bob)*3;
+    const squeeze = Math.abs(Math.sin(c.spin));
+    const w = Math.max(3, 12*squeeze);
+    // glow
+    ctx.globalAlpha = 0.25;
+    px(c.x - 10, bobY - 10, 20, 20, '#fff2a8');
+    ctx.globalAlpha = 1;
+    // coin body
+    px(c.x - w/2, bobY - 7, w, 14, '#c9911a');
+    px(c.x - w/2 + 1, bobY - 6, Math.max(1,w-2), 12, '#ffd54a');
+    if (w > 6) {
+      px(c.x - w/2 + Math.max(2,w/3), bobY - 3, Math.max(1,w/4), 6, '#fff2a8');
+    }
+    // sparkle
+    if (Math.sin(c.spin*2) > 0.85) {
+      px(c.x + 8, bobY - 10, 2, 2, '#ffffff');
+    }
+  });
+}
+
+// background decoration per biome (simple silhouettes, scrolling slowly)
+let decoOffset = 0;
+function drawBackgroundDeco(biome) {
+  decoOffset -= speed*0.3;
+  if (decoOffset <= -160) decoOffset += 160;
+  ctx.fillStyle = biome.bgDecoColor;
+  ctx.globalAlpha = 0.35;
+  for (let x = decoOffset; x < W+160; x += 160) {
+    if (biomeIndex === 0) { // desert - dune/cactus silhouette
+      px(x+20, GROUND_Y-40, 6, 40, biome.bgDecoColor);
+      px(x+14, GROUND_Y-30, 6, 20, biome.bgDecoColor);
+      px(x+26, GROUND_Y-28, 6, 18, biome.bgDecoColor);
+    } else if (biomeIndex === 1) { // forest - trees
+      px(x+30, GROUND_Y-55, 8, 55, biome.bgDecoColor);
+      px(x+18, GROUND_Y-70, 32, 24, biome.bgDecoColor);
+    } else if (biomeIndex === 2) { // snow - mountains
+      ctx.beginPath();
+      ctx.moveTo(x, GROUND_Y);
+      ctx.lineTo(x+40, GROUND_Y-70);
+      ctx.lineTo(x+80, GROUND_Y);
+      ctx.closePath();
+      ctx.fill();
+    } else if (biomeIndex === 3) { // lava - volcano spikes
+      ctx.beginPath();
+      ctx.moveTo(x, GROUND_Y);
+      ctx.lineTo(x+30, GROUND_Y-90);
+      ctx.lineTo(x+60, GROUND_Y);
+      ctx.closePath();
+      ctx.fill();
+    } else { // ocean - waves
+      for (let i=0;i<4;i++) {
+        px(x+i*20, GROUND_Y-10-((i%2)*6), 16, 4, biome.bgDecoColor);
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawDino() {
+  const x = dino.x, y = dino.y;
+  const skin = currentSkin();
+  if (inviFrames > 0 && Math.floor(inviFrames/4)%2===0) return; // flacker-effekt
+  const body = skin.body;
+  const belly = skin.belly;
+  const eye = '#111';
+  ctx.save();
+  if (dino.ducking) {
+    // ducking pose - low & long
+    px(x-2, y+4, 26, 10, body);
+    px(x+18, y+2, 10, 8, body);
+    px(x+24, y+3, 3, 3, eye);
+    px(x-2, y+10, 6, 4, body);
+    px(x+16, y+10, 6, 4, body);
+  } else {
+    const legFrame = dino.grounded ? (Math.floor(dino.animFrame) % 2) : 0;
+    // body
+    px(x+2, y+4, 14, 14, body);
+    px(x, y+8, 4, 10, body);
+    // head
+    px(x+10, y-4, 14, 12, body);
+    px(x+20, y-2, 4, 4, eye);
+    // belly
+    px(x+4, y+10, 8, 6, belly);
+    // tail
+    px(x-6, y+2, 8, 6, body);
+    px(x-10, y, 6, 4, body);
+    // legs (simple 2-frame run)
+    if (legFrame === 0) {
+      px(x+2, y+18, 5, 6, body);
+      px(x+12, y+18, 5, 6, body);
+    } else {
+      px(x+2, y+18, 5, 4, body);
+      px(x+12, y+18, 5, 6, body);
+      px(x+16, y+22, 4, 2, body);
+    }
+    // arm
+    px(x+8, y+8, 6, 3, body);
+  }
+  ctx.restore();
+}
+
+function drawObstacle(o, biome) {
+  const [c1,c2] = biome.obstacleColors;
+  if (o.type === 'ground') {
+    for (let i=0;i<o.segs;i++) {
+      const sx = o.x + i*16;
+      const sh = o.h - i*3;
+      const baseY = GROUND_Y - sh;
+      if (biomeIndex === 0) {
+        // Kaktus: Stamm + Arme
+        px(sx+3, baseY, 6, sh, c1);
+        px(sx, baseY+8, 3, 5, c1);
+        px(sx-3, baseY+4, 3, 10, c1);
+        px(sx+9, baseY+14, 3, 5, c1);
+        px(sx+12, baseY+10, 3, 10, c1);
+        px(sx+4, baseY+2, 2, sh-4, c2);
+        px(sx+2, baseY+6, 1, 8, c2);
+      } else if (biomeIndex === 1) {
+        // Busch/Baumstumpf mit Blättern
+        px(sx+2, baseY+sh-8, 8, 8, '#5a3a20');
+        px(sx-2, baseY, 16, sh-6, c1);
+        px(sx+2, baseY-3, 8, 6, c2);
+        px(sx-1, baseY+3, 6, 5, c2);
+        px(sx+7, baseY+3, 6, 5, c2);
+      } else if (biomeIndex === 2) {
+        // Eiszacken-Cluster
+        ctx.fillStyle = c1;
+        ctx.beginPath();
+        ctx.moveTo(sx, baseY+sh);
+        ctx.lineTo(sx+6, baseY);
+        ctx.lineTo(sx+12, baseY+sh);
+        ctx.closePath();
+        ctx.fill();
+        px(sx+4, baseY+sh-10, 3, 8, c2);
+      } else if (biomeIndex === 3) {
+        // Lava-Gesteinsbrocken mit Glut
+        px(sx, baseY+4, 12, sh-4, c1);
+        px(sx+2, baseY, 8, 6, c1);
+        px(sx+3, baseY+6, 3, 3, '#ff8c3a');
+        px(sx+7, baseY+12, 2, 2, '#ff5a1f');
+      } else {
+        // Korallen/Riff
+        px(sx+4, baseY+sh-6, 4, 6, '#e0704a');
+        px(sx, baseY+4, 4, sh-4, c1);
+        px(sx+7, baseY, 4, sh, c2);
+        px(sx+2, baseY-4, 3, 6, c1);
+      }
+    }
+  } else if (o.type === 'tall') {
+    if (biomeIndex === 0) {
+      // hoher schlanker Kaktus
+      px(o.x+5, GROUND_Y-o.h, 6, o.h, c1);
+      px(o.x, GROUND_Y-o.h+14, 5, 4, c1);
+      px(o.x-2, GROUND_Y-o.h+8, 3, 10, c1);
+      px(o.x+13, GROUND_Y-o.h+20, 5, 4, c1);
+      px(o.x+16, GROUND_Y-o.h+14, 3, 10, c1);
+      px(o.x+7, GROUND_Y-o.h+2, 2, o.h-4, c2);
+    } else if (biomeIndex === 1) {
+      // Nadelbaum
+      px(o.x+6, GROUND_Y-10, 4, 10, '#5a3a20');
+      px(o.x, GROUND_Y-22, 16, 14, c1);
+      px(o.x+3, GROUND_Y-34, 10, 14, c1);
+      px(o.x+6, GROUND_Y-44, 4, 12, c1);
+      px(o.x+5, GROUND_Y-20, 2, 2, c2);
+      px(o.x+10, GROUND_Y-30, 2, 2, c2);
+    } else if (biomeIndex === 2) {
+      // Eisberg-Spitze
+      ctx.fillStyle = c1;
+      ctx.beginPath();
+      ctx.moveTo(o.x, GROUND_Y);
+      ctx.lineTo(o.x+8, GROUND_Y-o.h);
+      ctx.lineTo(o.x+16, GROUND_Y);
+      ctx.closePath();
+      ctx.fill();
+      px(o.x+6, GROUND_Y-o.h+10, 4, 20, c2);
+    } else if (biomeIndex === 3) {
+      // Lava-Spitze mit Glut-Spitze
+      ctx.fillStyle = c1;
+      ctx.beginPath();
+      ctx.moveTo(o.x, GROUND_Y);
+      ctx.lineTo(o.x+8, GROUND_Y-o.h);
+      ctx.lineTo(o.x+16, GROUND_Y);
+      ctx.closePath();
+      ctx.fill();
+      px(o.x+6, GROUND_Y-o.h, 4, 6, '#ff8c3a');
+    } else {
+      // Seetang
+      px(o.x+6, GROUND_Y-o.h, 4, o.h, c1);
+      px(o.x+2, GROUND_Y-o.h+8, 4, 10, c2);
+      px(o.x+10, GROUND_Y-o.h+18, 4, 10, c2);
+      px(o.x+2, GROUND_Y-o.h+26, 4, 10, c1);
+    }
+  } else if (o.type === 'fly') {
+    const flap = Math.floor(frame/6)%2;
+    if (biomeIndex === 4) {
+      // Fisch statt Vogel im Ozean
+      px(o.x+4, o.flyY+2, 14, 8, c1);
+      px(o.x, o.flyY+3, 5, 6, c2);
+      px(o.x+16, o.flyY+2, 4, (flap===0?4:2), c2);
+      px(o.x+16, o.flyY+2+(flap===0?4:2), 4, (flap===0?2:4), c2);
+      px(o.x+8, o.flyY+3, 2, 2, '#111');
+    } else {
+      const body = biomeIndex===3 ? '#3a1f1f' : c1;
+      const wing = biomeIndex===3 ? '#6b2a2a' : c2;
+      px(o.x+6, o.flyY+4, 10, 6, body);
+      px(o.x+14, o.flyY+5, 5, 4, body);
+      if (flap===0) {
+        px(o.x, o.flyY, 8, 4, wing);
+        px(o.x+14, o.flyY, 8, 4, wing);
+      } else {
+        px(o.x, o.flyY+6, 8, 4, wing);
+        px(o.x+14, o.flyY+6, 8, 4, wing);
+      }
+      px(o.x+17, o.flyY+5, 2, 2, '#ff3030');
+    }
+  }
+}
+
+function draw() {
+  const biome = BIOMES[biomeIndex];
+  drawSky(biome);
+  drawBackgroundDeco(biome);
+  drawGround(biome);
+  drawParticles(biome);
+  obstacles.forEach(o => drawObstacle(o, biome));
+  drawCoins();
+  drawDino();
+
+  if (state === 'idle') {
+    // subtle bounce hint
+  }
+}
+
+// fade biome label back down
+setInterval(() => {
+  const label = document.getElementById('biomeLabel');
+  if (state === 'playing') label.style.opacity = '0.85';
+}, 2000);
+
+// ---------- MENU RENDERING ----------
+const overlayRoot = document.getElementById('overlay');
+
+function renderMenu() {
+  overlayRoot.classList.remove('hidden');
+  if (menuScreen === 'shop') { renderShop(); return; }
+  if (menuScreen === 'highscores') { renderHighscores(); return; }
+  renderMain();
+}
+
+function renderMain() {
+  const isDead = state === 'dead';
+  let html = '';
+  if (isDead) {
+    html += `<h1 class="tapArea">💥 GAME OVER</h1>
+      <p class="tapArea">Score: ${Math.floor(score)} &nbsp;•&nbsp; Best: ${Math.floor(hiscore)}</p>
+      <p class="tapArea">🪙 Gesammelt: ${runCoins} &nbsp;•&nbsp; Gesamt: ${totalCoins}</p>
+      <div id="nameForm">
+        <input id="nameInput" maxlength="12" placeholder="Dein Name">
+        <button class="panelBtn" id="saveScoreBtn">🏆 Speichern</button>
+      </div>
+      <p class="tapArea" style="margin-top:6px;">Tippen zum Neustart</p>`;
+  } else {
+    html += `<h1 class="tapArea">🦖 PIXEL DINO</h1>
+      <p class="tapArea">Leertaste / Klick / Tippen = Springen &nbsp;•&nbsp; Pfeil runter = Ducken</p>
+      <p class="tapArea">Durchquere Wüste, Wald, Schnee, Lava &amp; Ozean!</p>
+      <p class="tapArea">🪙 ${totalCoins} Münzen &nbsp;•&nbsp; ❤️ ${ownedLives} Leben in Reserve</p>
+      <p class="tapArea" style="margin-top:4px;">Tippen zum Starten</p>`;
+  }
+  html += `<div id="menuButtons">
+      <button class="panelBtn" id="openShopBtn">🛒 Shop</button>
+      <button class="panelBtn" id="openHighscoresBtn">🏆 Bestenliste</button>
+    </div>`;
+  overlayRoot.innerHTML = html;
+
+  if (isDead) {
+    document.getElementById('saveScoreBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = document.getElementById('nameInput').value.trim();
+      addToLeaderboard(name, score);
+      menuScreen = 'highscores';
+      renderMenu();
+    });
+    document.getElementById('nameInput').addEventListener('mousedown', e => e.stopPropagation());
+    document.getElementById('nameInput').addEventListener('touchstart', e => e.stopPropagation());
+  }
+  document.getElementById('openShopBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); menuScreen = 'shop'; renderMenu();
+  });
+  document.getElementById('openHighscoresBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); menuScreen = 'highscores'; renderMenu();
+  });
+}
+
+function renderShop() {
+  let rows = SKINS.map(s => {
+    const owned = ownedSkins.includes(s.id);
+    const selected = selectedSkin === s.id;
+    let label = selected ? '✓ Aktiv' : (owned ? 'Auswählen' : `${s.cost} 🪙`);
+    let cls = selected ? 'buyBtn selected' : (owned ? 'buyBtn owned' : 'buyBtn');
+    let disabled = (!owned && totalCoins < s.cost) ? 'disabled' : '';
+    return `<div class="shopRow">
+        <span><span class="swatch" style="background:${s.body}"></span>${s.name}</span>
+        <button class="${cls}" ${disabled} data-skin="${s.id}">${label}</button>
+      </div>`;
+  }).join('');
+
+  const lifeDisabled = totalCoins < LIFE_COST ? 'disabled' : '';
+  rows += `<div class="shopRow">
+      <span>❤️ Extra Leben (aktuell: ${ownedLives})</span>
+      <button class="buyBtn" ${lifeDisabled} id="buyLifeBtn">${LIFE_COST} 🪙</button>
+    </div>`;
+
+  overlayRoot.innerHTML = `
+    <div class="panel">
+      <h2>🛒 Shop &nbsp;•&nbsp; 🪙 ${totalCoins}</h2>
+      ${rows}
+    </div>
+    <div id="menuButtons"><button class="panelBtn" id="backBtn">⬅ Zurück</button></div>`;
+
+  overlayRoot.querySelectorAll('[data-skin]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-skin');
+      const skin = SKINS.find(s => s.id === id);
+      if (ownedSkins.includes(id)) {
+        selectedSkin = id;
+        localStorage.setItem('dino_selected_skin', selectedSkin);
+      } else if (totalCoins >= skin.cost) {
+        totalCoins -= skin.cost;
+        ownedSkins.push(id);
+        selectedSkin = id;
+        localStorage.setItem('dino_coins', totalCoins);
+        localStorage.setItem('dino_owned_skins', JSON.stringify(ownedSkins));
+        localStorage.setItem('dino_selected_skin', selectedSkin);
+        document.getElementById('coins').textContent = '🪙 ' + totalCoins;
+      }
+      renderShop();
+    });
+  });
+  const lifeBtn = document.getElementById('buyLifeBtn');
+  if (lifeBtn) lifeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (totalCoins >= LIFE_COST) {
+      totalCoins -= LIFE_COST;
+      ownedLives += 1;
+      localStorage.setItem('dino_coins', totalCoins);
+      localStorage.setItem('dino_lives', ownedLives);
+      document.getElementById('coins').textContent = '🪙 ' + totalCoins;
+      renderShop();
+    }
+  });
+  document.getElementById('backBtn').addEventListener('click', (e) => {
+    e.stopPropagation(); menuScreen = 'main'; renderMenu();
+  });
+}
+
+function renderHighscores() {
+  const list = loadLeaderboard();
+  const rows = list.length
+    ? list.map((r,i) => `<div class="lbRow"><span>#${i+1} ${r.name}</span><span>${r.score}</span></div>`).join('')
+    : `<p style="font-size:12px;opacity:0.7;">Noch keine Einträge. Spiel eine Runde!</p>`;
+  overlayRoot.innerHTML = `
+    <div class="panel">
+      <h2>🏆 Bestenliste</h2>
+      ${rows}
+    </div>
+    <p id="storageNote">Hinweis: Die Bestenliste wird lokal in diesem Browser gespeichert und ist nicht mit anderen Spielern geteilt (statisches GitHub-Pages-Hosting hat keinen Server). Für eine echte geräteübergreifende Bestenliste braucht es später ein kleines Backend (z. B. Firebase).</p>
+    <div id="menuButtons"><button class="panelBtn" id="backBtn2">⬅ Zurück</button></div>`;
+  document.getElementById('backBtn2').addEventListener('click', (e) => {
+    e.stopPropagation(); menuScreen = 'main'; renderMenu();
+  });
+}
+
+renderMenu();
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
